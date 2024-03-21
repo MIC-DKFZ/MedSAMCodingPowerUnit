@@ -156,25 +156,18 @@ class DefaultPreprocessor(object):
         # sparse
         rndst = np.random.RandomState(seed)
         class_locs = {}
-        for c in classes_or_regions:
-            k = c if not isinstance(c, list) else tuple(c)
-            if isinstance(c, (tuple, list)):
-                mask = seg == c[0]
-                for cc in c[1:]:
-                    mask = mask | (seg == cc)
-                all_locs = np.argwhere(mask)
-            else:
-                all_locs = np.argwhere(seg == c)
-            if len(all_locs) == 0:
-                class_locs[k] = []
-                continue
+        # change to just foreground here!!!
+        all_locs = np.argwhere(seg > 0)
+        if len(all_locs) == 0:
+            class_locs[1] = []
+        else:
             target_num_samples = min(num_samples, len(all_locs))
             target_num_samples = max(target_num_samples, int(np.ceil(len(all_locs) * min_percent_coverage)))
 
             selected = all_locs[rndst.choice(len(all_locs), target_num_samples, replace=False)]
-            class_locs[k] = selected
+            class_locs[1] = selected
             if verbose:
-                print(c, target_num_samples)
+                print(1, target_num_samples)
         return class_locs
 
     def _normalize(self, data: np.ndarray, seg: np.ndarray, configuration_manager: ConfigurationManager,
