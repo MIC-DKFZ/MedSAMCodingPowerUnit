@@ -12,13 +12,11 @@
 #    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
-import os.path
-from functools import lru_cache
-from typing import Union
+import os
 
 from batchgenerators.utilities.file_and_folder_operations import *
 import numpy as np
-import re
+from tqdm import tqdm
 
 from nnunetv2.paths import nnUNet_raw
 
@@ -41,10 +39,19 @@ def create_lists_from_splitted_dataset_folder(folder: str, file_ending: str, ide
     if identifiers is None:
         identifiers = get_identifiers_from_splitted_dataset_folder(folder, file_ending)
     files = subfiles(folder, suffix=file_ending, join=False, sort=True)
+    # way faster for many files, only works for single channel data
     list_of_lists = []
-    for f in identifiers:
-        p = re.compile(re.escape(f) + r"_\d\d\d\d" + re.escape(file_ending))
-        list_of_lists.append([join(folder, i) for i in files if p.fullmatch(i)])
+    for f in tqdm(identifiers):
+        try:
+            files.remove(f + "_0000" + file_ending)
+            list_of_lists.append([join(folder, f + "_0000" + file_ending)])
+        except ValueError:
+            pass
+    #list_of_lists = [[join(folder, f + "_0000" + file_ending)] for f in tqdm(identifiers) if (f + "_0000" + file_ending) in files]
+    #list_of_lists = []
+    #for f in identifiers:
+    #    p = re.compile(re.escape(f) + r"_\d\d\d\d" + re.escape(file_ending))
+    #    list_of_lists.append([join(folder, i) for i in files if p.fullmatch(i)])
     return list_of_lists
 
 
