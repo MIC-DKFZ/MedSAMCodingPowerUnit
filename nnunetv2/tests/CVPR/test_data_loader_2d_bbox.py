@@ -40,7 +40,6 @@ def visualize_batch(data):
         axes = axes.flatten()
         for i in range(data['data'].shape[0], nrows_cols**2):
             fig.delaxes(axes[i])
-    fig.tight_layout()
     fig.show()
     print('done')
 
@@ -50,6 +49,10 @@ if __name__ == "__main__":
     with open('/home/r403k/Data/CVPR/sandbox/dataset.json', 'r') as f:
         label_dict = json.load(f)
     label_manager = LabelManager(label_dict['labels'], None)
-    dataloader = nnUNetDataLoader2DBBOX(dataset, 16, (224, 288), (224, 288), label_manager=label_manager, bbox_dilation=20)
-    data = next(iter(dataloader))
-    visualize_batch(data)
+    dataloader = nnUNetDataLoader2DBBOX(dataset, 16, (224, 288), (224, 288), label_manager=label_manager, bbox_dilation=10)
+    while True:
+        data = next(iter(dataloader))
+        visualize_batch(data)
+        i = input('Press Enter to continue or "q" to quit...')
+        if i == 'q':
+            break
