@@ -579,7 +579,8 @@ class nnUNetTrainer(object):
                 val_keys = [keys[i] for i in idx_val]
                 self.print_to_log_file("This random 80:20 split has %d training and %d validation cases."
                                        % (len(tr_keys), len(val_keys)))
-            if any([i in val_keys for i in tr_keys]):
+            #if any([i in val_keys for i in tr_keys]):
+            if set(tr_keys).intersection(set(val_keys)):
                 self.print_to_log_file('WARNING: Some validation cases are also in the training set. Please check the '
                                        'splits.json or ignore if this is intentional.')
         return tr_keys, val_keys
