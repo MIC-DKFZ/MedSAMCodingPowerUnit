@@ -333,3 +333,34 @@ class nnUNetTrainerCPU(nnUNetTrainer):
             fn_hard = fn_hard[1:]
 
         return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
+
+
+class nnUNetTrainerCPU_Oversample(nnUNetTrainerCPU):
+    def get_plain_dataloaders(self, initial_patch_size: Tuple[int, ...], dim: int):
+        dataset_tr, dataset_val = self.get_tr_and_val_datasets()
+
+        modalities = {"CT": 0, "Dermoscopy": 0, "Endoscopy": 0, "Fundus": 0, "MR": 0, "Mammo": 0, "Microscopy": 0, "OCT": 0, "PET": 0, "US": 0, "XRay": 0}
+        for k in dataset_tr.keys():
+            modalities[k.split("_")[0]] += 1
+        assert len(dataset_tr.keys()) == sum(modalities.values()), "Some modalities are not accounted for"
+        sampling_probabilities = np.array([1.0 / np.sqrt(modalities[k.split("_")[0]]) for k in dataset_tr.keys()])
+        sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
+
+        if dim == 2:
+            dl_tr = nnUNetDataLoader2DBBOX(dataset_tr, self.batch_size,
+                                       initial_patch_size,
+                                       self.configuration_manager.patch_size,
+                                       self.label_manager,
+                                       oversample_foreground_percent=self.oversample_foreground_percent,
+                                       sampling_probabilities=sampling_probabilities, pad_sides=None,
+                                       footprint=5, bbox_dilation=20)
+            dl_val = nnUNetDataLoader2DBBOX(dataset_val, self.batch_size,
+                                        self.configuration_manager.patch_size,
+                                        self.configuration_manager.patch_size,
+                                        self.label_manager,
+                                        oversample_foreground_percent=self.oversample_foreground_percent,
+                                        sampling_probabilities=None, pad_sides=None,
+                                        footprint=5, bbox_dilation=20)
+        else:
+            raise NotImplementedError("3D dataloader not implemented")
+        return dl_tr, dl_val
