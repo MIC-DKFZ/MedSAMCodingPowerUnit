@@ -97,6 +97,22 @@ if __name__ == '__main__':
         required=False,
         help='directory to save the prediction',
     )
+    parser.add_argument(
+        '-m',
+        '--model_path',
+        type=str,
+        default='',
+        required=False,
+        help='directory to the model checkpoint',
+    )
+    parser.add_argument(
+        '-c',
+        '--checkpointname',
+        type=str,
+        default='checkpoint_final.pth',
+        required=False,
+        help='checkpoint file name',
+    )
     args = parser.parse_args()
     input_dir = Path(args.input_dir)
     if args.output_dir is None:
@@ -106,6 +122,6 @@ if __name__ == '__main__':
     output_dir.mkdir(exist_ok=True, parents=True)
 
     predictor = CVPRPredictor(allow_tqdm=False)
-    predictor.initialize_from_trained_model_folder("/home/y033f/DataDrive/CVPR_challenge/trained_models/Dataset987_CodingPowerUnit/nnUNetTrainerCPU__nnUNetResEncPlans__2d", (0,))
+    predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
     for npz_file in tqdm(list(input_dir.glob("*.npz"))):
         predictor.predict_case_with_bbox(npz_file, output_dir)
