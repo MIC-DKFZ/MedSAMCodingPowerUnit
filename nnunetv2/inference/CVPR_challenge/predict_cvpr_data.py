@@ -1,3 +1,4 @@
+from typing import List, Tuple
 import argparse
 import numpy as np
 from pathlib import Path
@@ -48,10 +49,12 @@ class CVPRPredictor(nnUNetPredictor):
             segs = self.predict_2d_npy_array_with_bbox(imgs, {'spacing': (999, 1, 1)}, bboxs)
         np.savez_compressed(output_dir/npz_name, segs=segs)
 
-    def predict_2d_npy_array_with_bbox(self, input_image: np.ndarray, image_properties: dict, input_bboxs: np.ndarray, 
+    def predict_2d_npy_array_with_bbox(self, input_image: np.ndarray, image_properties: dict, input_bboxs: np.ndarray,
                                  segmentation_previous_stage: np.ndarray = None,
                                  output_file_truncated: str = None,
-                                 save_or_return_probabilities: bool = False):
+                                 save_or_return_probabilities: bool = False,
+                                 crop_to_bbox_mask: bool = True,
+                                 context_fraction: float = 0.25):
         """
         image_properties must only have a 'spacing' key!
         """
@@ -71,12 +74,46 @@ class CVPRPredictor(nnUNetPredictor):
             bbox_mask = torch.zeros((1, 1, *data.shape[2:]), dtype=data.dtype)
             bbox_mask[:, :, bbox[1]:bbox[3], bbox[0]:bbox[2]] = 1
             net_input = torch.cat([data, bbox_mask], dim=0)
-            predicted_logits = self.predict_logits_from_preprocessed_data(net_input).cpu().numpy()
-            prediction = np.argmax(predicted_logits, 0)[0]
+            if crop_to_bbox_mask:
+                net_input, to_pad_input = self.crop_to_bbox_mask(net_input, bbox, context_fraction)
+            predicted_logits = self.predict_logits_from_preprocessed_data(net_input).cpu()
+            if crop_to_bbox_mask:
+                predicted_logits = torch.nn.functional.pad(predicted_logits, to_pad_input, mode='constant')
+            prediction = np.argmax(predicted_logits.numpy(), 0)[0]
             prediction[bbox_mask[0, 0] == 0] = 0
             seg[prediction == 1] = idx
 
         return seg
+
+    def crop_to_bbox_mask(self, net_input: torch.Tensor, bbox: np.ndarray, context_fraction: int = 0.25) -> Tuple[torch.Tensor, List]:
+        '''
+        Return the cropped image and the padding to recover the original shape.
+        '''
+        patch_size = self.configuration_manager.patch_size
+        x_min, y_min, x_max, y_max = bbox
+        x_image_max = net_input.shape[2]
+        y_image_max = net_input.shape[3]
+        if x_max - x_min < patch_size[0] * context_fraction:
+            center_x = (x_min + x_max) // 2
+            x_min_res = max(0, center_x - patch_size[0] // 2)
+            x_max_res = min(x_image_max, center_x + patch_size[0] // 2)
+            # FIXME: We assume even patch size
+            assert(x_max_res - x_min_res == patch_size[0])
+        else:
+            x_min_res = max(0, x_min - int(context_fraction * patch_size[0]))
+            x_max_res = min(x_image_max, x_max + int(context_fraction * patch_size[0]))
+
+        if y_max - y_min < patch_size[1] * context_fraction:
+            center_y = (y_min + y_max) // 2
+            y_min_res = max(0, center_y - patch_size[1] // 2)
+            y_max_res = min(y_image_max, center_y + patch_size[1] // 2)
+            # FIXME: We assume even patch size
+            assert(y_max_res - y_min_res == patch_size[1])
+        else:
+            y_min_res = max(0, y_min - int(context_fraction * patch_size[0]))
+            y_max_res = min(y_image_max, y_max + int(context_fraction * patch_size[1]))
+
+        return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, y_image_max - y_max_res, x_min_res, x_image_max - x_max_res, 0, 0, 0, 0]
 
 
 if __name__ == '__main__':
