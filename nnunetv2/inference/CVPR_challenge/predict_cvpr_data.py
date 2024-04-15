@@ -116,7 +116,9 @@ class CVPRPredictor(nnUNetPredictor):
         x_min_res, x_max_res = _get_min_max_crop(patch_size[0], context_fraction, x_min, x_max, x_image_max)
         y_min_res, y_max_res = _get_min_max_crop(patch_size[1], context_fraction, y_min, y_max, y_image_max)
 
-        return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, y_image_max - y_max_res, x_min_res, x_image_max - x_max_res, 0, 0, 0, 0]
+        # TODO: understand why badding can be negative here...
+        # return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, y_image_max - y_max_res, x_min_res, x_image_max - x_max_res, 0, 0, 0, 0]
+        return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
 
 
 if __name__ == '__main__':
