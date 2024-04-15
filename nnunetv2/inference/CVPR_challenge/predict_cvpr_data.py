@@ -93,25 +93,28 @@ class CVPRPredictor(nnUNetPredictor):
         x_min, y_min, x_max, y_max = bbox
         x_image_max = net_input.shape[2]
         y_image_max = net_input.shape[3]
-        if x_max - x_min < patch_size[0] * context_fraction:
-            center_x = (x_min + x_max) // 2
-            x_min_res = max(0, center_x - patch_size[0] // 2)
-            x_max_res = min(x_image_max, center_x + patch_size[0] // 2)
-            # FIXME: We assume even patch size
-            assert(x_max_res - x_min_res == patch_size[0])
-        else:
-            x_min_res = max(0, x_min - int(context_fraction * patch_size[0]))
-            x_max_res = min(x_image_max, x_max + int(context_fraction * patch_size[0]))
+        def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max):
+            if d_max - d_min < d_patch_size * context_fraction:
+                center = (d_min + d_max) // 2
+                d_min_res = center - d_patch_size // 2
+                # if we are close to the boundary we can only crop less than patch_size
+                # but add it to the other side to fill up whole patch size
+                optional_context = 0
+                if d_min_res < 0:
+                    optional_context += -d_min_res
+                    d_min_res = 0
+                d_max_res = center + d_patch_size // 2
+                if d_min_res > image_max:
+                    optional_context += d_max_res - image_max
+                    d_max_res = image_max
+                assert(d_max_res - d_min_res <= d_patch_size)
+            else:
+                d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
+                d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
+            return d_min_res, d_max_res
 
-        if y_max - y_min < patch_size[1] * context_fraction:
-            center_y = (y_min + y_max) // 2
-            y_min_res = max(0, center_y - patch_size[1] // 2)
-            y_max_res = min(y_image_max, center_y + patch_size[1] // 2)
-            # FIXME: We assume even patch size
-            assert(y_max_res - y_min_res == patch_size[1])
-        else:
-            y_min_res = max(0, y_min - int(context_fraction * patch_size[0]))
-            y_max_res = min(y_image_max, y_max + int(context_fraction * patch_size[1]))
+        x_min_res, x_max_res = _get_min_max_crop(patch_size[0], context_fraction, x_min, x_max, x_image_max)
+        y_min_res, y_max_res = _get_min_max_crop(patch_size[1], context_fraction, y_min, y_max, y_image_max)
 
         return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, y_image_max - y_max_res, x_min_res, x_image_max - x_max_res, 0, 0, 0, 0]
 
