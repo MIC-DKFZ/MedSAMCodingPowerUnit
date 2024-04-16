@@ -97,39 +97,23 @@ class CVPRPredictor(nnUNetPredictor):
             """
             Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
             """
-            if d_max - d_min < d_patch_size * context_fraction:
-                center = (d_min + d_max) // 2
-                d_min_res = center - d_patch_size // 2
-                # if we are close to the boundary we can only crop less than patch_size
-                # but add it to the other side to fill up whole patch size
+            d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
+            d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
+
+            # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
+            if d_max_res - d_min_res < d_patch_size:
+                current_size = d_max_res - d_min_res
+                free_space = d_patch_size - current_size
+                d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
                 optional_context = 0
-                if d_min_res < 0:
-                    optional_context += -d_min_res
-                    d_min_res = 0
-                d_max_res = center + d_patch_size // 2 + optional_context
                 if d_max_res > image_max:
                     optional_context += d_max_res - image_max
                     d_max_res = image_max
-                    d_min_res = max(0, d_min_res - optional_context)
-                assert(d_max_res - d_min_res <= d_patch_size)
-            else:
-                d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
-                d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
-
-                # d_max_res - d_min_res can still be smaller than patch size -> enlarge crop to patch size
-                if d_max_res - d_min_res < d_patch_size:
-                    current_size = d_max_res - d_min_res
-                    free_space = d_patch_size - current_size
-                    d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
-                    optional_context = 0
-                    if d_max_res > image_max:
-                        optional_context += d_max_res - image_max
-                        d_max_res = image_max
-                    d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
-                    if d_min_res < 0:
-                        optional_context += -d_min_res
-                        d_min_res = 0
-                        d_max_res = min(image_max, d_max_res + optional_context)
+                d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
+                if d_min_res < 0:
+                    optional_context += -d_min_res
+                    d_min_res = 0
+                    d_max_res = min(image_max, d_max_res + optional_context)
 
             return d_min_res, d_max_res
 
