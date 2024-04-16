@@ -91,9 +91,12 @@ class CVPRPredictor(nnUNetPredictor):
         '''
         patch_size = self.configuration_manager.patch_size
         x_min, y_min, x_max, y_max = bbox
-        x_image_max = net_input.shape[2]
-        y_image_max = net_input.shape[3]
-        def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max):
+        x_image_max = net_input.shape[3]
+        y_image_max = net_input.shape[2]
+        def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
+            """
+            Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
+            """
             if d_max - d_min < d_patch_size * context_fraction:
                 center = (d_min + d_max) // 2
                 d_min_res = center - d_patch_size // 2
@@ -103,22 +106,40 @@ class CVPRPredictor(nnUNetPredictor):
                 if d_min_res < 0:
                     optional_context += -d_min_res
                     d_min_res = 0
-                d_max_res = center + d_patch_size // 2
-                if d_min_res > image_max:
+                d_max_res = center + d_patch_size // 2 + optional_context
+                if d_max_res > image_max:
                     optional_context += d_max_res - image_max
                     d_max_res = image_max
+                    d_min_res = max(0, d_min_res - optional_context)
                 assert(d_max_res - d_min_res <= d_patch_size)
             else:
                 d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
                 d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
+
+                # d_max_res - d_min_res can still be smaller than patch size -> enlarge crop to patch size
+                if d_max_res - d_min_res < d_patch_size:
+                    current_size = d_max_res - d_min_res
+                    free_space = d_patch_size - current_size
+                    d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
+                    optional_context = 0
+                    if d_max_res > image_max:
+                        optional_context += d_max_res - image_max
+                        d_max_res = image_max
+                    d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
+                    if d_min_res < 0:
+                        optional_context += -d_min_res
+                        d_min_res = 0
+                        d_max_res = min(image_max, d_max_res + optional_context)
+
             return d_min_res, d_max_res
 
-        x_min_res, x_max_res = _get_min_max_crop(patch_size[0], context_fraction, x_min, x_max, x_image_max)
-        y_min_res, y_max_res = _get_min_max_crop(patch_size[1], context_fraction, y_min, y_max, y_image_max)
+        # TODO: check which patch size goes in which image dim...
+        x_min_res, x_max_res = _get_min_max_crop(patch_size[1], context_fraction, x_min, x_max, x_image_max)
+        y_min_res, y_max_res = _get_min_max_crop(patch_size[0], context_fraction, y_min, y_max, y_image_max)
 
-        # TODO: understand why badding can be negative here...
-        # return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, y_image_max - y_max_res, x_min_res, x_image_max - x_max_res, 0, 0, 0, 0]
-        return net_input[:, :, x_min_res:x_max_res, y_min_res:y_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
+        # TODO: understand why padding can be negative here... -> seemingly I used the wrong {x,y}_image_max wrt {x,y}_{min,max}_res
+        return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [x_min_res, x_image_max - x_max_res, y_min_res, y_image_max - y_max_res, 0, 0, 0, 0]
+        # return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
 
 
 if __name__ == '__main__':
