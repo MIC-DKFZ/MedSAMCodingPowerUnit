@@ -2,6 +2,7 @@ from typing import List, Tuple
 import argparse
 import numpy as np
 from pathlib import Path
+import random
 import torch
 from tqdm import tqdm
 
@@ -184,7 +185,9 @@ if __name__ == '__main__':
 
     predictor = CVPRPredictor(allow_tqdm=False)
     predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
-    files_to_predict = list(input_dir.glob("*.npz"))
+    random.seed(42)
+    files_to_predict = sorted(list(input_dir.glob("*.npz")))
+    random.shuffle(files_to_predict)
     if args.num_gpus > 1:
         files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
     for npz_file in tqdm(files_to_predict):
