@@ -275,3 +275,24 @@ class nnUNetTrainerCPU_Oversample(nnUNetTrainerCPU):
 
 class nnUNetTrainerCPUDA5(nnUNetTrainerCPU, nnUNetTrainerDA5):
     pass
+
+
+class nnUNetTrainerCPU_ADAMW(nnUNetTrainerCPU):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True, device: torch.device = ...):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.initial_lr = 1e-3
+        self.betas = (0.9, 0.999)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.network.parameters(),
+            lr=self.initial_lr,
+            betas=self.betas,
+            eps=1e-04,  # default of 1e-8 may cause nan's for fp16
+            weight_decay=self.weight_decay)
+        lr_scheduler = PolyLRScheduler(optimizer, self.initial_lr, self.num_epochs)
+        return optimizer, lr_scheduler
+
+
+class nnUNetTrainerCPUDA5_ADAMW(nnUNetTrainerCPU_ADAMW, nnUNetTrainerCPUDA5):
+    pass
