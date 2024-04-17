@@ -148,7 +148,7 @@ if __name__ == '__main__':
         '-m',
         '--model_path',
         type=str,
-        default='',
+        default='/home/y033f/DataDrive/CVPR_challenge/trained_models/Dataset987_CodingPowerUnit/nnUNetTrainerCPU__nnUNetResEncPlans__2d',
         required=False,
         help='directory to the model checkpoint',
     )
@@ -160,6 +160,20 @@ if __name__ == '__main__':
         required=False,
         help='checkpoint file name',
     )
+    parser.add_argument(
+        '--num_gpus',
+        type=int,
+        default=1,
+        required=False,
+        help='number of GPUs to use'
+    )
+    parser.add_argument(
+        '--gpu_id',
+        type=int,
+        default=0,
+        required=False,
+        help='GPU id to use'
+    )
     args = parser.parse_args()
     input_dir = Path(args.input_dir)
     if args.output_dir is None:
@@ -170,5 +184,8 @@ if __name__ == '__main__':
 
     predictor = CVPRPredictor(allow_tqdm=False)
     predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
-    for npz_file in tqdm(list(input_dir.glob("*.npz"))):
+    files_to_predict = list(input_dir.glob("*.npz"))
+    if args.num_gpus > 1:
+        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
+    for npz_file in tqdm(files_to_predict):
         predictor.predict_case_with_bbox(npz_file, output_dir)
