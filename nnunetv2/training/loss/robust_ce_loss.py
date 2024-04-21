@@ -1,6 +1,9 @@
+from typing import Union, Callable, List
 import torch
 from torch import nn, Tensor
 import numpy as np
+
+from nnunetv2.utilities.helpers import softmax_helper_dim1
 
 
 class RobustCrossEntropyLoss(nn.CrossEntropyLoss):
@@ -45,7 +48,7 @@ class FocalLoss(nn.CrossEntropyLoss):
     :param reduction: reduction method, can either be 'mean' or 'sum'
     """
 
-    def __init__(self, apply_nonlin: Union[None, Callable]=softmax_helper_dim1, alpha: Union[None, float, List, np.ndarray]=None, gamma: float=2, 
+    def __init__(self, apply_nonlin: Union[None, Callable]=softmax_helper_dim1, alpha: Union[None, float, List, np.ndarray]=None, gamma: float=2,
                  balance_index: int=0, smooth: Union[None, float]=1e-5, eps: Union[None, float]=1e-8, reduction: str="mean"):
         super().__init__()
         self.apply_nonlin = apply_nonlin
