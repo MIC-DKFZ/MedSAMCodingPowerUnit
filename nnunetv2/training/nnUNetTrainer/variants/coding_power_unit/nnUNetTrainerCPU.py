@@ -14,10 +14,11 @@ from nnunetv2.training.dataloading.data_loader_2d_bbox import nnUNetDataLoader2D
 from nnunetv2.training.loss.compound_losses import DC_and_Focal_loss
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
-from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
+from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler, PolyLRSchedulerWarmUp
 from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import dummy_context
 from torch import autocast, nn
+from nnunetv2.training.dataloading.nnunet_dataset import nnUNetFineTuiningDataset
 
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.training.nnUNetTrainer.variants.data_augmentation.nnUNetTrainerDA5 import nnUNetTrainerDA5
@@ -288,6 +289,7 @@ class nnUNetTrainerCPU_ADAMW(nnUNetTrainerCPU):
 class nnUNetTrainerCPUDA5_ADAMW(nnUNetTrainerCPU_ADAMW, nnUNetTrainerCPUDA5):
     pass
 
+
 class nnUNetTrainerCPU_LatePrompt(nnUNetTrainerCPU):
     def __init__(
         self,
@@ -326,3 +328,36 @@ class nnUNetTrainerCPU_LatePrompt(nnUNetTrainerCPU):
             network.apply(network.initialize)
 
         return network
+
+
+class nnUNetTrainerCPU_FineTune_Base(nnUNetTrainerCPU):
+    def get_tr_and_val_datasets(self):
+        # create dataset split
+        tr_keys, val_keys = self.do_split()
+
+        # load the datasets for training and validation. Note that we always draw random samples so we really don't
+        # care about distributing training cases across GPUs.
+        dataset_tr = nnUNetFineTuiningDataset(self.preprocessed_dataset_folder, tr_keys,
+                                   folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                                   num_images_properties_loading_threshold=0, modality=self.modality)
+        dataset_val = nnUNetFineTuiningDataset(self.preprocessed_dataset_folder, val_keys,
+                                    folder_with_segs_from_previous_stage=self.folder_with_segs_from_previous_stage,
+                                    num_images_properties_loading_threshold=0, modality=self.modality)
+        return dataset_tr, dataset_val
+
+    def configure_optimizers(self):
+        self.initial_lr = 1e-3
+        optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
+                                    momentum=0.99, nesterov=True)
+        lr_scheduler = PolyLRSchedulerWarmUp(optimizer, self.initial_lr, self.num_epochs)
+        return optimizer, lr_scheduler
+
+
+# Look at this sick implementation as many classes as you want in 8 lines of code
+MODALITIES = ['CT', 'Dermoscopy', 'Endoscopy', 'Fundus', 'Mammo', 'Microscopy', 'MR', 'OCT', 'PET', 'US', 'XRay']
+
+for modality in MODALITIES:
+    class_name = f"nnUNetTrainerCPU_FineTune_{modality}"
+    class_dict = {"modality": modality}
+    class_obj = type(class_name, (nnUNetTrainerCPU_FineTune_Base,), class_dict)
+    globals()[class_name] = class_obj

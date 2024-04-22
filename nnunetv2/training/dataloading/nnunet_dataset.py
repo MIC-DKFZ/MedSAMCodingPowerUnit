@@ -5,7 +5,7 @@ import numpy as np
 import shutil
 
 from batchgenerators.utilities.file_and_folder_operations import join, load_pickle, isfile
-from nnunetv2.training.dataloading.utils import get_case_identifiers
+from nnunetv2.training.dataloading.utils import get_case_identifiers, get_case_identifiers_for_fine_tuining
 
 
 class nnUNetDataset(object):
@@ -143,4 +143,35 @@ if __name__ == '__main__':
         print('all good')
         # move file back
         shutil.move(join(folder, 'liver_XXX.pkl'), join(folder, 'liver_0.pkl'))
+
+
+class nnUNetFineTuiningDataset(nnUNetDataset):
+    def __init__(self, folder: str, case_identifiers: List[str] = None,
+                 num_images_properties_loading_threshold: int = 0,
+                 folder_with_segs_from_previous_stage: str = None,
+                 modality: str = 'CT'):
+        object.__init__(self)
+
+        if case_identifiers is None:
+            # TODO: for CVPR maybe add a check if the identifier is correct
+            case_identifiers = get_case_identifiers_for_fine_tuining(folder, modality)
+        case_identifiers.sort()
+        # Filter for modality
+        case_identifiers = [c for c in case_identifiers if c.startswith(modality)]
+
+        self.dataset = {}
+        for c in case_identifiers:
+            self.dataset[c] = {}
+            self.dataset[c]['data_file'] = join(folder, f"{c}.npz")
+            self.dataset[c]['properties_file'] = join(folder, f"{c}.pkl")
+            if folder_with_segs_from_previous_stage is not None:
+                self.dataset[c]['seg_from_prev_stage_file'] = join(folder_with_segs_from_previous_stage, f"{c}.npz")
+
+        if len(case_identifiers) <= num_images_properties_loading_threshold:
+            for i in self.dataset.keys():
+                self.dataset[i]['properties'] = load_pickle(self.dataset[i]['properties_file'])
+
+        self.keep_files_open = ('nnUNet_keep_files_open' in os.environ.keys()) and \
+                               (os.environ['nnUNet_keep_files_open'].lower() in ('true', '1', 't'))
+        # print(f'nnUNetDataset.keep_files_open: {self.keep_files_open}')
 
