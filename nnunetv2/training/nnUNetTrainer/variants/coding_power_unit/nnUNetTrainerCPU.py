@@ -22,6 +22,12 @@ from torch import autocast, nn
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.training.nnUNetTrainer.variants.data_augmentation.nnUNetTrainerDA5 import nnUNetTrainerDA5
 
+import pydoc
+import warnings
+from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
+from batchgenerators.utilities.file_and_folder_operations import join
+from nnunetv2.architecture.promptable_unet import PromptableUNet
+
 
 class nnUNetTrainerCPU(nnUNetTrainer):
     @staticmethod
@@ -281,3 +287,42 @@ class nnUNetTrainerCPU_ADAMW(nnUNetTrainerCPU):
 
 class nnUNetTrainerCPUDA5_ADAMW(nnUNetTrainerCPU_ADAMW, nnUNetTrainerCPUDA5):
     pass
+
+class nnUNetTrainerCPU_LatePrompt(nnUNetTrainerCPU):
+    def __init__(
+        self,
+        plans: dict,
+        configuration: str,
+        fold: int,
+        dataset_json: dict,
+        unpack_dataset: bool = True,
+        device: torch.device = torch.device("cuda"),
+    ):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.enable_deep_supervision = False
+
+    @staticmethod
+    def build_network_architecture(architecture_class_name: str,
+                                   arch_init_kwargs: dict,
+                                   arch_init_kwargs_req_import: Union[List[str], Tuple[str, ...]],
+                                   num_input_channels: int,
+                                   num_output_channels: int,
+                                   enable_deep_supervision: bool = True) -> nn.Module:
+        architecture_kwargs = dict(**arch_init_kwargs)
+        for ri in arch_init_kwargs_req_import:
+            if architecture_kwargs[ri] is not None:
+                architecture_kwargs[ri] = pydoc.locate(architecture_kwargs[ri])
+
+        if enable_deep_supervision is not None and 'deep_supervision' not in arch_init_kwargs.keys():
+            arch_init_kwargs['deep_supervision'] = enable_deep_supervision
+
+        network = PromptableUNet(
+            input_channels=num_input_channels,
+            num_classes=num_output_channels,
+            **architecture_kwargs
+        )
+
+        if hasattr(network, 'initialize'):
+            network.apply(network.initialize)
+
+        return network
