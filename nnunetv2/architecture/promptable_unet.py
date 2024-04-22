@@ -57,7 +57,7 @@ class PromptableUNet(nn.Module):
         self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
                                    nonlin_first=nonlin_first)
         
-        self.prompt_injector = StackedConvBlocks(2, 4, 33, 32, kernel_sizes[-1], strides[-1], conv_bias, norm_op, 
+        self.prompt_injector = StackedConvBlocks(4, conv_op, 33, 32, kernel_sizes[-1], strides[-1], conv_bias, norm_op, 
                                                  norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first)
         self.final_conv = conv_op(32, num_classes, 1, 1, 0, bias=True)
 
