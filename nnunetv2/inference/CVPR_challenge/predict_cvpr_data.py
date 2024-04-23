@@ -175,6 +175,13 @@ if __name__ == '__main__':
         required=False,
         help='GPU id to use'
     )
+    parser.add_argument(
+        '--modality',
+        type=str,
+        default=None,
+        required=False,
+        help='If set only the modality provided will be predicted'
+    )
     args = parser.parse_args()
     input_dir = Path(args.input_dir)
     if args.output_dir is None:
@@ -187,6 +194,8 @@ if __name__ == '__main__':
     predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
     random.seed(42)
     files_to_predict = sorted(list(input_dir.glob("*.npz")))
+    if args.modality is not None:
+        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
     random.shuffle(files_to_predict)
     if args.num_gpus > 1:
         files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
