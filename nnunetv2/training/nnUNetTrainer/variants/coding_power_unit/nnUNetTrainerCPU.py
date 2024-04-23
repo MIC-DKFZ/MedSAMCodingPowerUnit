@@ -379,10 +379,3 @@ for modality in MODALITIES:
     class_dict = {"modality": modality}
     class_obj = type(class_name, (nnUNetTrainerCPU_SingleModality_Base,), class_dict)
     globals()[class_name] = class_obj
-
-
-for modality in MODALITIES:
-    class_name = f"nnUNetTrainerCPU_SingleModalityLowLR_{modality}"
-    class_dict = {"modality": modality}
-    class_obj = type(class_name, (nnUNetTrainerCPU_FineTune_Base,), class_dict)
-    globals()[class_name] = class_obj
