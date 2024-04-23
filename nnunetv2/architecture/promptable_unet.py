@@ -57,7 +57,7 @@ class PromptableUNet(nn.Module):
         self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision,
                                    nonlin_first=nonlin_first)
         
-        self.prompt_injector = StackedConvBlocks(4, conv_op, 33, 32, kernel_sizes[-1], strides[-1], conv_bias, norm_op, 
+        self.prompt_injector = StackedConvBlocks(4, conv_op, 33, 32, kernel_sizes[-1], [1,1], conv_bias, norm_op, 
                                                  norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs, nonlin_first)
         self.final_conv = conv_op(32, num_classes, 1, 1, 0, bias=True)
 
@@ -155,3 +155,10 @@ class UNetDecoder(nn.Module):
             lres_input = x
 
         return x
+    
+
+if __name__ == '__main__':
+    model = PromptableUNet(1, 6, [32, 64, 128, 256, 512, 512], nn.Conv2d, [[3,3],[3,3],[3,3],[3,3],[3,3],[3,3]], [[1,1],[2,2],[2,2],[2,2],[2,2],[2,2]], [2,2,2,2,2,2], 2, [2,2,2,2,2], True).cuda()
+    x = torch.randn((52, 2, 224, 288)).cuda()
+    out = model(x)
+    print(out.shape)
