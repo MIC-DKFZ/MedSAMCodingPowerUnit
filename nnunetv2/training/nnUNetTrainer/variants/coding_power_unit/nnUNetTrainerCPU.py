@@ -330,7 +330,7 @@ class nnUNetTrainerCPU_LatePrompt(nnUNetTrainerCPU):
         return network
 
 
-class nnUNetTrainerCPU_FineTune_Base(nnUNetTrainerCPU):
+class nnUNetTrainerCPU_SingleModality_Base(nnUNetTrainerCPU):
     def get_tr_and_val_datasets(self):
         # create dataset split
         tr_keys, val_keys = self.do_split()
@@ -345,6 +345,8 @@ class nnUNetTrainerCPU_FineTune_Base(nnUNetTrainerCPU):
                                     num_images_properties_loading_threshold=0, modality=self.modality)
         return dataset_tr, dataset_val
 
+
+class nnUNetTrainerCPU_FineTune_Base(nnUNetTrainerCPU_SingleModality_Base):
     def configure_optimizers(self):
         self.initial_lr = 1e-3
         optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
@@ -358,6 +360,20 @@ MODALITIES = ['CT', 'Dermoscopy', 'Endoscopy', 'Fundus', 'Mammo', 'Microscopy', 
 
 for modality in MODALITIES:
     class_name = f"nnUNetTrainerCPU_FineTune_{modality}"
+    class_dict = {"modality": modality}
+    class_obj = type(class_name, (nnUNetTrainerCPU_FineTune_Base,), class_dict)
+    globals()[class_name] = class_obj
+
+
+for modality in MODALITIES:
+    class_name = f"nnUNetTrainerCPU_SingleModality_{modality}"
+    class_dict = {"modality": modality}
+    class_obj = type(class_name, (nnUNetTrainerCPU_SingleModality_Base,), class_dict)
+    globals()[class_name] = class_obj
+
+
+for modality in MODALITIES:
+    class_name = f"nnUNetTrainerCPU_SingleModalityLowLR_{modality}"
     class_dict = {"modality": modality}
     class_obj = type(class_name, (nnUNetTrainerCPU_FineTune_Base,), class_dict)
     globals()[class_name] = class_obj
