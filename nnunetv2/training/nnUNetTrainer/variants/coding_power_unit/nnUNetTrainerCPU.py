@@ -355,6 +355,15 @@ class nnUNetTrainerCPU_FineTune_Base(nnUNetTrainerCPU_SingleModality_Base):
         return optimizer, lr_scheduler
 
 
+class nnUNetTrainerCPU_LowLR(nnUNetTrainerCPU):
+    def configure_optimizers(self):
+        self.initial_lr = 1e-3
+        optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
+                                    momentum=0.99, nesterov=True)
+        lr_scheduler = PolyLRSchedulerWarmUp(optimizer, self.initial_lr, self.num_epochs)
+        return optimizer, lr_scheduler
+
+
 # Look at this sick implementation as many classes as you want in 8 lines of code
 MODALITIES = ['CT', 'Dermoscopy', 'Endoscopy', 'Fundus', 'Mammo', 'Microscopy', 'MR', 'OCT', 'PET', 'US', 'XRay']
 
