@@ -75,6 +75,59 @@ class PromptableUNet(nn.Module):
         return self.encoder.compute_conv_feature_map_size(input_size) + self.decoder.compute_conv_feature_map_size(input_size)
     
 
+class PromptableResEncUNet(nn.Module):
+    def __init__(self,
+                 input_channels: int,
+                 n_stages: int,
+                 features_per_stage: Union[int, List[int], Tuple[int, ...]],
+                 conv_op: Type[_ConvNd],
+                 kernel_sizes: Union[int, List[int], Tuple[int, ...]],
+                 strides: Union[int, List[int], Tuple[int, ...]],
+                 n_blocks_per_stage: Union[int, List[int], Tuple[int, ...]],
+                 num_classes: int,
+                 n_conv_per_stage_decoder: Union[int, Tuple[int, ...], List[int]],
+                 conv_bias: bool = False,
+                 norm_op: Union[None, Type[nn.Module]] = None,
+                 norm_op_kwargs: dict = None,
+                 dropout_op: Union[None, Type[_DropoutNd]] = None,
+                 dropout_op_kwargs: dict = None,
+                 nonlin: Union[None, Type[torch.nn.Module]] = None,
+                 nonlin_kwargs: dict = None,
+                 deep_supervision: bool = False,
+                 block: Union[Type[BasicBlockD], Type[BottleneckD]] = BasicBlockD,
+                 bottleneck_channels: Union[int, List[int], Tuple[int, ...]] = None,
+                 stem_channels: int = None
+                 ):
+        super().__init__()
+        if isinstance(n_blocks_per_stage, int):
+            n_blocks_per_stage = [n_blocks_per_stage] * n_stages
+        if isinstance(n_conv_per_stage_decoder, int):
+            n_conv_per_stage_decoder = [n_conv_per_stage_decoder] * (n_stages - 1)
+        assert len(n_blocks_per_stage) == n_stages, "n_blocks_per_stage must have as many entries as we have " \
+                                                  f"resolution stages. here: {n_stages}. " \
+                                                  f"n_blocks_per_stage: {n_blocks_per_stage}"
+        assert len(n_conv_per_stage_decoder) == (n_stages - 1), "n_conv_per_stage_decoder must have one less entries " \
+                                                                f"as we have resolution stages. here: {n_stages} " \
+                                                                f"stages, so it should have {n_stages - 1} entries. " \
+                                                                f"n_conv_per_stage_decoder: {n_conv_per_stage_decoder}"
+        self.encoder = ResidualEncoder(input_channels, n_stages, features_per_stage, conv_op, kernel_sizes, strides,
+                                       n_blocks_per_stage, conv_bias, norm_op, norm_op_kwargs, dropout_op,
+                                       dropout_op_kwargs, nonlin, nonlin_kwargs, block, bottleneck_channels,
+                                       return_skips=True, disable_default_stem=False, stem_channels=stem_channels)
+        self.decoder = UNetDecoder(self.encoder, num_classes, n_conv_per_stage_decoder, deep_supervision)
+
+        self.prompt_injector = StackedConvBlocks(4, conv_op, 33, 32, kernel_sizes[-1], [1,1], conv_bias, norm_op, 
+                                                 norm_op_kwargs, dropout_op, dropout_op_kwargs, nonlin, nonlin_kwargs)
+        self.final_conv = conv_op(32, num_classes, 1, 1, 0, bias=True)
+
+    def forward(self, x):
+        x, bbox_maks = x[:,:-1], x[:,-1:]
+        skips = self.encoder(x)
+        features = self.decoder(skips)
+        features = self.prompt_injector(torch.cat((features, bbox_maks), 1))
+        return self.final_conv(features)
+    
+
 
 class UNetDecoder(nn.Module):
     def __init__(self,
@@ -158,7 +211,8 @@ class UNetDecoder(nn.Module):
     
 
 if __name__ == '__main__':
-    model = PromptableUNet(1, 6, [32, 64, 128, 256, 512, 512], nn.Conv2d, [[3,3],[3,3],[3,3],[3,3],[3,3],[3,3]], [[1,1],[2,2],[2,2],[2,2],[2,2],[2,2]], [2,2,2,2,2,2], 2, [2,2,2,2,2], True).cuda()
+    #model = PromptableUNet(1, 6, [32, 64, 128, 256, 512, 512], nn.Conv2d, [[3,3],[3,3],[3,3],[3,3],[3,3],[3,3]], [[1,1],[2,2],[2,2],[2,2],[2,2],[2,2]], [2,2,2,2,2,2], 2, [2,2,2,2,2], True).cuda()
+    model = PromptableResEncUNet(1, 6, [32, 64, 128, 256, 512, 512], nn.Conv2d, [[3,3],[3,3],[3,3],[3,3],[3,3],[3,3]], [[1,1],[2,2],[2,2],[2,2],[2,2],[2,2]], [2,2,2,2,2,2], 2, [2,2,2,2,2], True).cuda()
     x = torch.randn((52, 2, 224, 288)).cuda()
     out = model(x)
     print(out.shape)
