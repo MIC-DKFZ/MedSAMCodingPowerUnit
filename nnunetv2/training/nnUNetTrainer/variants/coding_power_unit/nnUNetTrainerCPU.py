@@ -99,6 +99,9 @@ class nnUNetTrainerCPU(nnUNetTrainer):
             raise NotImplementedError("3D dataloader not implemented")
         return dl_tr, dl_val
 
+    def modify_output(self, output, bbox_mask):
+        return output
+
     def train_step(self, batch: dict) -> dict:
         data = batch['data']
         target = batch['target']
@@ -121,6 +124,8 @@ class nnUNetTrainerCPU(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             # del data
+
+            output = self.modify_output(output, bbox_mask)
             l = self.loss(output, target)
 
         if self.grad_scaler is not None:
@@ -156,6 +161,7 @@ class nnUNetTrainerCPU(nnUNetTrainer):
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             del data
+            output = self.modify_output(output, bbox_mask)
             l = self.loss(output, target)
 
         # we only need the output with the highest output resolution (if DS enabled)
@@ -237,6 +243,13 @@ class nnUNetTrainerCPU_Oversample(nnUNetTrainerCPU):
 
 class nnUNetTrainerCPUDA5(nnUNetTrainerCPU, nnUNetTrainerDA5):
     pass
+
+
+class nnUNetTrainerCPU_BBoxLimitedLoss(nnUNetTrainerCPU):
+    def modify_output(self, output, bbox_mask):
+        downsampler_for_ds = [ds for ds in self.dataloader_train.transform.transforms if isinstance(ds, DownsampleSegForDSTransform2)][0]
+        ds_bbox_mask = downsampler_for_ds(**{downsampler_for_ds.input_key: bbox_mask.cpu().numpy()})[downsampler_for_ds.output_key]
+        return [o * torch.from_numpy(b).to(torch.bool).to(o.device).expand_as(o) for o, b in zip(output, ds_bbox_mask)]
 
 
 class nnUNetTrainerCPU_FocalLoss(nnUNetTrainerCPU):
@@ -328,7 +341,7 @@ class nnUNetTrainerCPU_LatePrompt(nnUNetTrainerCPU):
             network.apply(network.initialize)
 
         return network
-    
+
 
 class nnUNetTrainerCPU_LatePromptResEnc(nnUNetTrainerCPU_LatePrompt):
     @staticmethod
