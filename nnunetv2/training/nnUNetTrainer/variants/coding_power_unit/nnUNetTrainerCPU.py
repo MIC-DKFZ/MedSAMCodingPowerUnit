@@ -1,35 +1,35 @@
+from time import time
 from typing import Union, Tuple, List
 
 import numpy as np
 import torch
-from torch import distributed as dist
 from batchgenerators.transforms.abstract_transforms import AbstractTransform, Compose
 from batchgenerators.transforms.utility_transforms import RemoveLabelTransform, RenameTransform, NumpyToTensor
+from batchgenerators.utilities.file_and_folder_operations import join
 
 from nnunetv2.training.data_augmentation.custom_transforms.cascade_transforms import MoveSegAsOneHotToData
 from nnunetv2.training.data_augmentation.custom_transforms.deep_supervision_donwsampling import \
     DownsampleSegForDSTransform2
 from nnunetv2.training.data_augmentation.custom_transforms.region_based_training import \
     ConvertSegmentationToRegionsTransform
-from nnunetv2.training.dataloading.data_loader_2d_bbox import nnUNetDataLoader2DBBOX, nnUNetDataLoader2DBBOX2HEAD
-from nnunetv2.training.logging.nnunet_logger import nnUNetLogger, nnUNetLogger2HEAD
-from nnunetv2.training.loss.compound_losses import DC_and_Focal_loss
+from nnunetv2.training.logging.nnunet_logger import nnUNetLogger2HEAD
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
-from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler, PolyLRSchedulerWarmUp
+from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
+from nnunetv2.utilities.collate_outputs import collate_outputs
 from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import dummy_context
 from torch import autocast, nn
+from torch import distributed as dist
+
+from nnunetv2.training.dataloading.data_loader_2d_bbox import nnUNetDataLoader2DBBOX, nnUNetDataLoader2DBBOX2HEAD
+from nnunetv2.training.loss.compound_losses import DC_and_Focal_loss
+from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler, PolyLRSchedulerWarmUp
 from nnunetv2.training.dataloading.nnunet_dataset import nnUNetFineTuiningDataset
-from nnunetv2.utilities.collate_outputs import collate_outputs
 
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
 from nnunetv2.training.nnUNetTrainer.variants.data_augmentation.nnUNetTrainerDA5 import nnUNetTrainerDA5
-
 import pydoc
-import warnings
-from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
-from batchgenerators.utilities.file_and_folder_operations import join
 from nnunetv2.architecture.promptable_unet import PromptableUNet, PromptableResEncUNet, PromptableResEncUNetMultiHead
 
 
@@ -591,6 +591,34 @@ class nnUNetTrainerCPU_LatePromptResEnc2HEAD(nnUNetTrainerCPU_LatePromptResEnc):
         self.logger.log('dice_per_class_or_region', global_dc_per_class, self.current_epoch)
         self.logger.log('val_losses_prompt', loss_here_prompt, self.current_epoch)
         self.logger.log('val_losses_full', loss_here_full, self.current_epoch)
+
+    def on_epoch_end(self):
+        self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
+
+        self.print_to_log_file('train_loss_prompt', np.round(self.logger.my_fantastic_logging['train_losses_prompt'][-1], decimals=4))
+        self.print_to_log_file('train_loss_full', np.round(self.logger.my_fantastic_logging['train_losses_full'][-1], decimals=4))
+        self.print_to_log_file('val_loss_prompt', np.round(self.logger.my_fantastic_logging['val_losses_prompt'][-1], decimals=4))
+        self.print_to_log_file('val_loss_full', np.round(self.logger.my_fantastic_logging['val_losses_full'][-1], decimals=4))
+        self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
+                                               self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
+        self.print_to_log_file(
+            f"Epoch time: {np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)} s")
+
+        # handling periodic checkpointing
+        current_epoch = self.current_epoch
+        if (current_epoch + 1) % self.save_every == 0 and current_epoch != (self.num_epochs - 1):
+            self.save_checkpoint(join(self.output_folder, 'checkpoint_latest.pth'))
+
+        # handle 'best' checkpointing. ema_fg_dice is computed by the logger and can be accessed like this
+        if self._best_ema is None or self.logger.my_fantastic_logging['ema_fg_dice'][-1] > self._best_ema:
+            self._best_ema = self.logger.my_fantastic_logging['ema_fg_dice'][-1]
+            self.print_to_log_file(f"Yayy! New best EMA pseudo Dice: {np.round(self._best_ema, decimals=4)}")
+            self.save_checkpoint(join(self.output_folder, 'checkpoint_best.pth'))
+
+        if self.local_rank == 0:
+            self.logger.plot_progress_png(self.output_folder)
+
+        self.current_epoch += 1
 
 
 class nnUNetTrainerCPU_SingleModality_Base(nnUNetTrainerCPU):
