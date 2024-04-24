@@ -159,7 +159,7 @@ class nnUNetLogger2HEAD(nnUNetLogger):
         ax = ax_all[0]
         ax2 = ax.twinx()
         x_values = list(range(epoch + 1))
-        ax.plot(x_values, self.my_fantastic_logging['train_losses_promt'][:epoch + 1], color='b', ls='-', label="loss_tr_prompt", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['train_losses_prompt'][:epoch + 1], color='b', ls='-', label="loss_tr_prompt", linewidth=4)
         ax.plot(x_values, self.my_fantastic_logging['train_losses_full'][:epoch + 1], color='b', ls='dotted', label="loss_tr_full", linewidth=4)
         ax.plot(x_values, self.my_fantastic_logging['val_losses_prompt'][:epoch + 1], color='r', ls='-', label="loss_val_prompt", linewidth=4)
         ax.plot(x_values, self.my_fantastic_logging['val_losses_full'][:epoch + 1], color='r', ls='dotted', label="loss_val_full", linewidth=4)
