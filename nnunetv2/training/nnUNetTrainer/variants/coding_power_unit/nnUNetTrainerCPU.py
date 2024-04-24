@@ -445,7 +445,7 @@ class nnUNetTrainerCPU_LatePromptResEnc2HEAD(nnUNetTrainerCPU_LatePromptResEnc):
             output_promt, output_full = self.network(data)
             # del data
 
-            l_prompt = self.loss(output_promt, target_prompt) 
+            l_prompt = self.loss(output_promt, target_prompt)
             l_full = self.loss(output_full, target_full)
             l = l_prompt + l_full
 
@@ -485,7 +485,7 @@ class nnUNetTrainerCPU_LatePromptResEnc2HEAD(nnUNetTrainerCPU_LatePromptResEnc):
             output_prompt, output_full = self.network(data)
             del data
 
-            l_prompt = self.loss(output_prompt, target_prompt) 
+            l_prompt = self.loss(output_prompt, target_prompt)
             l_full = self.loss(output_full, target_full)
             l = l_prompt + l_full
 
@@ -535,7 +535,7 @@ class nnUNetTrainerCPU_LatePromptResEnc2HEAD(nnUNetTrainerCPU_LatePromptResEnc):
             fp_hard = fp_hard[1:]
             fn_hard = fn_hard[1:]
 
-        return {'loss_prompt': l.detach().cpu().numpy(), 'loss_full': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
+        return {'loss_prompt': l_prompt.detach().cpu().numpy(), 'loss_full': l_full.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
         outputs = collate_outputs(train_outputs)
