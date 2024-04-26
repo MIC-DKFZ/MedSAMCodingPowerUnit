@@ -23,7 +23,7 @@ class CVPRPredictor(nnUNetPredictor):
         super().__init__(perform_everything_on_device=perform_everything_on_device, device=device, verbose=verbose,
                          verbose_preprocessing=verbose_preprocessing, allow_tqdm=allow_tqdm)
 
-    def predict_case_with_bbox(self, npz_file, output_dir):
+    def predict_case_with_bbox(self, npz_file: np.ndarray, output_dir: Path):
         npz_file = Path(npz_file)
         npz_name = npz_file.name
         try:
@@ -127,6 +127,29 @@ class CVPRPredictor(nnUNetPredictor):
         # return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
 
 
+def main(args):
+    output_dir = Path(args.output_dir)
+    input_dir = Path(args.input_dir)
+    if args.device == 'cuda':
+        device = torch.device('cuda')
+    elif args.device == 'cpu':
+        device = torch.device('cpu')
+    else:
+        raise ValueError(f"Device {args.device} not supported")
+
+    predictor = CVPRPredictor(allow_tqdm=False, device=device)
+    predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
+    random.seed(42)
+    files_to_predict = sorted(list(input_dir.glob("*.npz")))
+    if args.modality is not None:
+        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
+    random.shuffle(files_to_predict)
+    if args.num_gpus > 1:
+        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
+    for npz_file in tqdm(files_to_predict):
+        predictor.predict_case_with_bbox(npz_file, output_dir)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -182,22 +205,18 @@ if __name__ == '__main__':
         required=False,
         help='If set only the modality provided will be predicted'
     )
+    parser.add_argument(
+        '--device',
+        type=str,
+        default='cuda',
+        required=False,
+        help='Specify device to use'
+    )
     args = parser.parse_args()
-    input_dir = Path(args.input_dir)
+    args.input_dir = Path(args.input_dir)
     if args.output_dir is None:
-        output_dir = input_dir.parent / "predictions"
+        args.output_dir = args.input_dir.parent / "predictions"
     else:
-        output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    predictor = CVPRPredictor(allow_tqdm=False)
-    predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
-    random.seed(42)
-    files_to_predict = sorted(list(input_dir.glob("*.npz")))
-    if args.modality is not None:
-        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
-    random.shuffle(files_to_predict)
-    if args.num_gpus > 1:
-        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
-    for npz_file in tqdm(files_to_predict):
-        predictor.predict_case_with_bbox(npz_file, output_dir)
+        args.output_dir = Path(args.output_dir)
+    args.output_dir.mkdir(exist_ok=True, parents=True)
+    main(args)
