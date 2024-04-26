@@ -1,0 +1,12 @@
+*.md
+!README.md
+*.npz
+*.csv
+.git
+.github
+.gitignore
+**/test_demo
+test_demo/**/*
+test.py
+_checkpoints
+_CVPR_challenge
