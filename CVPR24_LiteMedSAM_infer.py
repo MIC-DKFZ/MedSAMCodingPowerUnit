@@ -10,5 +10,6 @@ if __name__ == "__main__":
     args.checkpointname = 'checkpoint_final.pth'
     args.modality = None
     args.device = 'cpu'
+    args.fold = 0
     args.num_gpus = 1
     predict(args)

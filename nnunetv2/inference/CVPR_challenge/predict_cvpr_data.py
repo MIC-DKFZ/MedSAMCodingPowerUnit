@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import argparse
 import numpy as np
 from pathlib import Path
@@ -32,7 +32,8 @@ class CVPRPredictor(nnUNetPredictor):
         except:
             (output_dir/npz_name).unlink(missing_ok=True)
         with np.load(npz_file) as f:
-            imgs = f['imgs'].astype(np.float16)
+            # imgs = f['imgs'].astype(np.float16)  # for CPU this might be flaot32
+            imgs = f['imgs'].astype(np.float32)  # for CPU this might be flaot32
             bboxs = f["boxes"]
         segs = np.zeros_like(imgs, dtype=np.uint16)
         if npz_name.startswith("3D"):
@@ -77,7 +78,11 @@ class CVPRPredictor(nnUNetPredictor):
             net_input = torch.cat([data, bbox_mask], dim=0)
             if crop_to_bbox_mask:
                 net_input, to_pad_input = self.crop_to_bbox_mask(net_input, bbox, context_fraction)
+
+            # Cast to precision
+            # with torch.amp.autocast(device_type=self.device.type, dtype=torch.float16):
             predicted_logits = self.predict_logits_from_preprocessed_data(net_input).cpu()
+
             if crop_to_bbox_mask:
                 predicted_logits = torch.nn.functional.pad(predicted_logits, to_pad_input, mode='constant')
             prediction = np.argmax(predicted_logits.numpy(), 0)[0]
@@ -137,8 +142,11 @@ def main(args):
     else:
         raise ValueError(f"Device {args.device} not supported")
 
+    args.fold = int(args.fold) if args.fold != 'all' else 'all'
     predictor = CVPRPredictor(allow_tqdm=False, device=device)
-    predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
+    predictor.initialize_from_trained_model_folder(args.model_path, (args.fold,), args.checkpointname)
+    if hasattr(predictor.network, 'return_unet_head'):
+        predictor.network.return_unet_head = False
     random.seed(42)
     files_to_predict = sorted(list(input_dir.glob("*.npz")))
     if args.modality is not None:
@@ -202,6 +210,13 @@ if __name__ == '__main__':
         '--modality',
         type=str,
         default=None,
+        required=False,
+        help='If set only the modality provided will be predicted'
+    )
+    parser.add_argument(
+        '--fold',
+        type=str,
+        default='0',
         required=False,
         help='If set only the modality provided will be predicted'
     )
