@@ -19,12 +19,13 @@ class nnUNetDataLoader2DSAM(nnUNetDataLoaderBase):
         self.bbox_dilation = bbox_dilation
 
     def get_bbox(self, seg: np.ndarray, properties: dict):
-        target = np.random.choice(list(properties["mask_dict"].keys()))
-        labels = properties["mask_dict"][target]
-        bbox = properties["bboxs"][target-1]
-        bbox = list(map(int, [bbox[0][0], bbox[1][0], bbox[0][1], bbox[1][1]]))
-        seg_bin = np.where(np.isin(seg, list(labels)), 1, 0)
-        size = [bbox[1]-bbox[0], bbox[3]-bbox[2]]
+        targets = np.random.choice(list(properties["mask_dict"].keys()), self.num_bbox, replace=True)
+        labels = [properties["mask_dict"][target] for target in targets]
+        bboxs = [properties["bboxs"][target-1] for target in targets]
+        bboxs = [list(map(int, [bbox[0][0], bbox[1][0], bbox[0][1], bbox[1][1]])) for bbox in bboxs]
+        seg_bin = np.zeros((self.num_bbox, *seg.shape[1:]), dtype=seg.dtype)
+        for i, label in enumerate(labels):
+            seg_bin[i] = np.where(np.isin(seg, list(label)), 1, 0)
 
         need_to_pad = self.need_to_pad.copy()
         data_shape = seg.shape[1:]
@@ -44,9 +45,10 @@ class nnUNetDataLoader2DSAM(nnUNetDataLoaderBase):
         # bbox_lbs = [np.random.randint(bbox[0]-max(0, self.patch_size[0]-size[0]), bbox[0]+1),
                     # np.random.randint(bbox[2]-max(0, self.patch_size[1]-size[1]), bbox[2]+1)]
         # bbox_ubs = [bbox_lbs[i] + self.patch_size[i] for i in range(2)]
-        bbox_mask = np.zeros_like(seg)
-        jitter = np.random.randint(0, self.bbox_dilation+1, size=4)
-        bbox_mask[:, bbox[0]-jitter[0]:bbox[1]+jitter[1], bbox[2]-jitter[2]:bbox[3]+jitter[3]] = 1
+        bbox_mask = np.zeros_like(seg_bin)
+        jitter = np.random.randint(0, self.bbox_dilation+1, size=(self.num_bbox, 4))
+        for i, bbox in enumerate(bboxs):
+            bbox_mask[i, bbox[0]-jitter[i][0]:bbox[1]+jitter[i][1], bbox[2]-jitter[i][2]:bbox[3]+jitter[i][3]] = 1
 
         return bbox_lbs, bbox_ubs, np.concatenate([seg_bin.astype(seg.dtype), bbox_mask.astype(seg.dtype)], axis=0)
 
@@ -54,7 +56,7 @@ class nnUNetDataLoader2DSAM(nnUNetDataLoaderBase):
         selected_keys = self.get_indices()
         # preallocate memory for data and seg
         data_all = np.zeros(self.data_shape, dtype=np.float32)
-        seg_all = np.zeros((self.seg_shape[0], 2, *self.seg_shape[2:]), dtype=np.int16)
+        seg_all = np.zeros((self.seg_shape[0], 2*self.num_bbox, *self.seg_shape[2:]), dtype=np.int16)
         case_properties = []
 
         for j, current_key in enumerate(selected_keys):

@@ -128,6 +128,15 @@ class PromptableResEncUNet(nn.Module):
         return self.final_conv(features)
     
 
+class PromptableResEncUNetMultiPrompt(PromptableResEncUNet):
+    def forward(self, x, bbox_masks):
+        skips = self.encoder(x)
+        features = self.decoder(skips)
+        prompt_features = [self.prompt_injector(torch.cat((features, bbox_masks[:, i:i+1]), 1)) for i in range(bbox_masks.shape[1])]
+        predictions = [self.final_conv(prompt_feature) for prompt_feature in prompt_features]
+        return predictions
+
+
 class PromptableResEncUNetMultiHead(nn.Module):
     def __init__(self,
                  input_channels: int,
@@ -185,7 +194,6 @@ class PromptableResEncUNetMultiHead(nn.Module):
             out_unet = self.unet_head(features)
             return out_prompt, out_unet
         return out_prompt
-
 
 
 class UNetDecoder(nn.Module):
