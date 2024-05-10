@@ -213,6 +213,13 @@ class nnUNetTrainerCPU(nnUNetTrainer):
         return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
 
 
+class nnUNetTrainerCPU_ft_SAM(nnUNetTrainerCPU):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.initial_lr = 1e-3
+
+
 class nnUNetTrainerCPU_Oversample(nnUNetTrainerCPU):
     def get_plain_dataloaders(self, initial_patch_size: Tuple[int, ...], dim: int):
         dataset_tr, dataset_val = self.get_tr_and_val_datasets()
