@@ -20,6 +20,7 @@ from nnunetv2.training.dataloading.data_loader_2d_sam import nnUNetDataLoader2DS
 from nnunetv2.architecture.promptable_unet import PromptableResEncUNetMultiPrompt
 
 from nnunetv2.training.nnUNetTrainer.nnUNetTrainer import nnUNetTrainer
+from nnunetv2.training.lr_scheduler.polylr import PolyLRSchedulerWarmUp
 
 
 class nnUNetTrainerSAM(nnUNetTrainer):
@@ -357,3 +358,19 @@ class nnUNetTrainerSAM_LatePrompt_10(nnUNetTrainerSAM_LatePrompt_1):
                  device: torch.device = torch.device('cuda')):
         super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
         self.num_bbox = 10
+
+
+class nnUNetTrainerSAM_ft_fulllr_lwu(nnUNetTrainerSAM):
+    def configure_optimizers(self):
+        optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
+                                    momentum=0.99, nesterov=True)
+        lr_scheduler = PolyLRSchedulerWarmUp(optimizer, self.initial_lr, self.num_epochs, warmup_steps=20)
+        return optimizer, lr_scheduler
+
+
+class nnUNetTrainerSAM_LatePrompt_10_ft_fulllr_lwu(nnUNetTrainerSAM_LatePrompt_10):
+    def configure_optimizers(self):
+        optimizer = torch.optim.SGD(self.network.parameters(), self.initial_lr, weight_decay=self.weight_decay,
+                                    momentum=0.99, nesterov=True)
+        lr_scheduler = PolyLRSchedulerWarmUp(optimizer, self.initial_lr, self.num_epochs, warmup_steps=20)
+        return optimizer, lr_scheduler
