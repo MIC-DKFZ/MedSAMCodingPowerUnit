@@ -374,3 +374,15 @@ class nnUNetTrainerSAM_LatePrompt_10_ft_fulllr_lwu(nnUNetTrainerSAM_LatePrompt_1
                                     momentum=0.99, nesterov=True)
         lr_scheduler = PolyLRSchedulerWarmUp(optimizer, self.initial_lr, self.num_epochs, warmup_steps=20)
         return optimizer, lr_scheduler
+
+
+class nnUNetTrainerSAM_ft_1en3(nnUNetTrainerSAM):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.initial_lr = 1e-3
+
+
+class nnUNetTrainerSAM_LatePrompt_10_ft_1en3(nnUNetTrainerSAM_LatePrompt_10):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True, device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.initial_lr = 1e-3
