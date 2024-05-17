@@ -1,3 +1,4 @@
+import time
 from typing import List, Tuple
 import argparse
 import numpy as np
@@ -5,34 +6,60 @@ from pathlib import Path
 import random
 import torch
 from tqdm import tqdm
-
+#from numba import jit
 from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
+#@jit(nopython=True)
+def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
+    """
+    Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
+    """
+    d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
+    d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
+
+    # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
+    if d_max_res - d_min_res < d_patch_size:
+        current_size = d_max_res - d_min_res
+        free_space = d_patch_size - current_size
+        d_max_res = d_max_res + int(np.ceil(free_space / 2))  # .astype(np.int32)
+        optional_context = 0
+        if d_max_res > image_max:
+            optional_context += d_max_res - image_max
+            d_max_res = image_max
+        # d_min_res = d_min_res - np.floor(free_space / 2).astype(np.int32) - optional_context
+        d_min_res = d_min_res - int(np.floor(free_space / 2)) - optional_context
+        if d_min_res < 0:
+            optional_context += -d_min_res
+            d_min_res = 0
+            d_max_res = min(image_max, d_max_res + optional_context)
+    return d_min_res, d_max_res
 
 class CVPRPredictor(nnUNetPredictor):
     def __init__(self,
                  tile_step_size: float = 0.5,
-                 use_gaussian: bool = True,
-                 use_mirroring: bool = True,
+                 use_gaussian: bool = False,
+                 use_mirroring: bool = False,
                  perform_everything_on_device: bool = True,
                  device: torch.device = torch.device('cuda'),
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
-                 allow_tqdm: bool = True):
+                 allow_tqdm: bool = True,
+                 is_openvino: bool = False):
         super().__init__(perform_everything_on_device=perform_everything_on_device, device=device, verbose=verbose,
-                         verbose_preprocessing=verbose_preprocessing, allow_tqdm=allow_tqdm)
+                         verbose_preprocessing=verbose_preprocessing, allow_tqdm=allow_tqdm, use_gaussian = use_gaussian,
+                         use_mirroring = use_mirroring, is_openvino = is_openvino)
 
     def predict_case_with_bbox(self, npz_file, output_dir):
         npz_file = Path(npz_file)
         npz_name = npz_file.name
-        try:
-            np.load(output_dir/npz_name)
-            return
-        except:
-            (output_dir/npz_name).unlink(missing_ok=True)
+        #try:
+        #    np.load(output_dir/npz_name)
+        #    return
+        #except:
+        #    (output_dir/npz_name).unlink(missing_ok=True)
         with np.load(npz_file) as f:
-            imgs = f['imgs'].astype(np.float16)
+            imgs = f['imgs'].astype(np.float32)
             bboxs = f["boxes"]
         segs = np.zeros_like(imgs, dtype=np.uint16)
         if npz_name.startswith("3D"):
@@ -90,33 +117,33 @@ class CVPRPredictor(nnUNetPredictor):
         '''
         Return the cropped image and the padding to recover the original shape.
         '''
+        global _get_min_max_crop
         patch_size = self.configuration_manager.patch_size
         x_min, y_min, x_max, y_max = bbox
         x_image_max = net_input.shape[3]
         y_image_max = net_input.shape[2]
-        def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
-            """
-            Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
-            """
-            d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
-            d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
-
-            # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
-            if d_max_res - d_min_res < d_patch_size:
-                current_size = d_max_res - d_min_res
-                free_space = d_patch_size - current_size
-                d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
-                optional_context = 0
-                if d_max_res > image_max:
-                    optional_context += d_max_res - image_max
-                    d_max_res = image_max
-                d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
-                if d_min_res < 0:
-                    optional_context += -d_min_res
-                    d_min_res = 0
-                    d_max_res = min(image_max, d_max_res + optional_context)
-
-            return d_min_res, d_max_res
+        # def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
+        #     """
+        #     Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
+        #     """
+        #     d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
+        #     d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
+        #
+        #     # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
+        #     if d_max_res - d_min_res < d_patch_size:
+        #         current_size = d_max_res - d_min_res
+        #         free_space = d_patch_size - current_size
+        #         d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
+        #         optional_context = 0
+        #         if d_max_res > image_max:
+        #             optional_context += d_max_res - image_max
+        #             d_max_res = image_max
+        #         d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
+        #         if d_min_res < 0:
+        #             optional_context += -d_min_res
+        #             d_min_res = 0
+        #             d_max_res = min(image_max, d_max_res + optional_context)
+        #     return d_min_res, d_max_res
 
         # TODO: check which patch size goes in which image dim...
         x_min_res, x_max_res = _get_min_max_crop(patch_size[1], context_fraction, x_min, x_max, x_image_max)
@@ -190,7 +217,7 @@ if __name__ == '__main__':
         output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    predictor = CVPRPredictor(allow_tqdm=False)
+    predictor = CVPRPredictor(allow_tqdm=False, device = torch.device('cpu'), is_openvino = True)
     predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
     random.seed(42)
     files_to_predict = sorted(list(input_dir.glob("*.npz")))
