@@ -10,6 +10,42 @@ from tqdm import tqdm
 from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
+import inspect
+import itertools
+import multiprocessing
+import os
+from copy import deepcopy
+from time import sleep
+from typing import Tuple, Union, List, Optional
+
+import numpy as np
+import torch
+from acvl_utils.cropping_and_padding.padding import pad_nd_image
+from batchgenerators.dataloading.multi_threaded_augmenter import MultiThreadedAugmenter
+from batchgenerators.utilities.file_and_folder_operations import load_json, join, isfile, maybe_mkdir_p, isdir, subdirs, \
+    save_json
+from torch import nn
+from torch._dynamo import OptimizedModule
+from torch.nn.parallel import DistributedDataParallel
+from tqdm import tqdm
+
+import nnunetv2
+from nnunetv2.configuration import default_num_processes
+from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy, preprocessing_iterator_fromfiles, \
+    preprocessing_iterator_fromnpy
+from nnunetv2.inference.export_prediction import export_prediction_from_logits, \
+    convert_predicted_logits_to_segmentation_with_correct_shape
+from nnunetv2.inference.sliding_window_prediction import compute_gaussian, \
+    compute_steps_for_sliding_window
+from nnunetv2.utilities.file_path_utilities import get_output_folder, check_workers_alive_and_busy
+from nnunetv2.utilities.find_class_by_name import recursive_find_python_class
+from nnunetv2.utilities.helpers import empty_cache, dummy_context
+from nnunetv2.utilities.json_export import recursive_fix_for_json_export
+from nnunetv2.utilities.label_handling.label_handling import determine_num_input_channels
+from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
+from nnunetv2.utilities.utils import create_lists_from_splitted_dataset_folder
+
+
 #@jit(nopython=True)
 def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
     """
@@ -48,7 +84,99 @@ class CVPRPredictor(nnUNetPredictor):
                  is_openvino: bool = False):
         super().__init__(perform_everything_on_device=perform_everything_on_device, device=device, verbose=verbose,
                          verbose_preprocessing=verbose_preprocessing, allow_tqdm=allow_tqdm, use_gaussian = use_gaussian,
-                         use_mirroring = use_mirroring, is_openvino = is_openvino)
+                         use_mirroring = use_mirroring)
+        self.is_openvino = is_openvino
+
+    def initialize_from_trained_model_folder(self, model_training_output_dir: str,
+                                             use_folds: Union[Tuple[Union[int, str]], None],
+                                             checkpoint_name: str = 'checkpoint_final.pth'):
+        """
+        This is used when making predictions with a trained model
+        """
+        if use_folds is None:
+            use_folds = nnUNetPredictor.auto_detect_available_folds(model_training_output_dir, checkpoint_name)
+
+        dataset_json = load_json(join(model_training_output_dir, 'dataset.json'))
+        plans = load_json(join(model_training_output_dir, 'plans.json'))
+        plans_manager = PlansManager(plans)
+
+        if isinstance(use_folds, str):
+            use_folds = [use_folds]
+
+        parameters = []
+        for i, f in enumerate(use_folds):
+            f = int(f) if f != 'all' else f
+            checkpoint = torch.load(join(model_training_output_dir, f'fold_{f}', checkpoint_name),
+                                    map_location=torch.device('cpu'))
+            if i == 0:
+                trainer_name = checkpoint['trainer_name']
+                configuration_name = checkpoint['init_args']['configuration']
+                inference_allowed_mirroring_axes = checkpoint['inference_allowed_mirroring_axes'] if \
+                    'inference_allowed_mirroring_axes' in checkpoint.keys() else None
+
+            parameters.append(checkpoint['network_weights'])
+
+        configuration_manager = plans_manager.get_configuration(configuration_name)
+        # restore network
+        num_input_channels = determine_num_input_channels(plans_manager, configuration_manager, dataset_json)
+        trainer_class = recursive_find_python_class(join(nnunetv2.__path__[0], "training", "nnUNetTrainer"),
+                                                    trainer_name, 'nnunetv2.training.nnUNetTrainer')
+
+        network = trainer_class.build_network_architecture(
+            configuration_manager.network_arch_class_name,
+            configuration_manager.network_arch_init_kwargs,
+            configuration_manager.network_arch_init_kwargs_req_import,
+            num_input_channels,
+            plans_manager.get_label_manager(dataset_json).num_segmentation_heads,
+            enable_deep_supervision=False
+        )
+
+        self.plans_manager = plans_manager
+        self.configuration_manager = configuration_manager
+        self.list_of_parameters = parameters
+        self.network = network
+        self.dataset_json = dataset_json
+        self.trainer_name = trainer_name
+        self.allowed_mirroring_axes = inference_allowed_mirroring_axes
+        self.label_manager = plans_manager.get_label_manager(dataset_json)
+        self.network.eval()
+        for params in self.list_of_parameters:
+            # messing with state dict names...
+            if not isinstance(self.network, OptimizedModule):
+                self.network.load_state_dict(params)
+            else:
+                self.network._orig_mod.load_state_dict(params)
+        if self.is_openvino:
+            print('OpenVino')
+            import openvino as ov
+            core = ov.Core()
+            # input_tensor = torch.randn(1, 4, 224, 224, requires_grad=False)
+            ov_model = ov.convert_model(self.network)  # , example_input=input_tensor)
+            self.network = core.compile_model(ov_model, "CPU")
+
+    def _internal_maybe_mirror_and_predict(self, x: torch.Tensor) -> torch.Tensor:
+        mirror_axes = self.allowed_mirroring_axes if self.use_mirroring else None
+        if self.is_openvino:
+            prediction = torch.from_numpy(self.network(x)[0])
+        else:
+            prediction = self.network(x)
+
+        if mirror_axes is not None:
+            # check for invalid numbers in mirror_axes
+            # x should be 5d for 3d images and 4d for 2d. so the max value of mirror_axes cannot exceed len(x.shape) - 3
+            assert max(mirror_axes) <= x.ndim - 3, 'mirror_axes does not match the dimension of the input!'
+
+            axes_combinations = [
+                c for i in range(len(mirror_axes)) for c in itertools.combinations([m + 2 for m in mirror_axes], i + 1)
+            ]
+            for axes in axes_combinations:
+                if not self.is_openvino:
+                    prediction += torch.flip(self.network(torch.flip(x, (*axes,))), (*axes,))
+                else:
+                    temp_pred = torch.from_numpy(self.network(torch.flip(x, (*axes,)))[0])
+                    prediction += torch.flip(temp_pred, (*axes,))
+            prediction /= (len(axes_combinations) + 1)
+        return prediction
 
     def predict_case_with_bbox(self, npz_file, output_dir):
         npz_file = Path(npz_file)

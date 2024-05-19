@@ -12,6 +12,7 @@ WORKDIR /opt/app
 ENV PATH="/home/user/.local/bin:${PATH}"
 
 RUN python -m pip install --user -U pip && python -m pip install --user pip-tools
+RUN python -m pip install --user openvino
 
 COPY --chown=user:user . .
 RUN python -m pip install --user -e .
