@@ -219,6 +219,10 @@ class nnUNetTrainerCPU_ft_SAM(nnUNetTrainerCPU):
         self.initial_lr = 1e-3
 
 
+class nnUNetTrainerCPU_ft_SAM_2(nnUNetTrainerCPU_ft_SAM):
+    pass
+
+
 class nnUNetTrainerCPU_Oversample(nnUNetTrainerCPU):
     def get_plain_dataloaders(self, initial_patch_size: Tuple[int, ...], dim: int):
         dataset_tr, dataset_val = self.get_tr_and_val_datasets()
