@@ -1,65 +1,39 @@
-import time
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import argparse
 import numpy as np
 from pathlib import Path
 import random
 import torch
 from tqdm import tqdm
-#from numba import jit
+
 from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
-#@jit(nopython=True)
-def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
-    """
-    Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
-    """
-    d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
-    d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
-
-    # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
-    if d_max_res - d_min_res < d_patch_size:
-        current_size = d_max_res - d_min_res
-        free_space = d_patch_size - current_size
-        d_max_res = d_max_res + int(np.ceil(free_space / 2))  # .astype(np.int32)
-        optional_context = 0
-        if d_max_res > image_max:
-            optional_context += d_max_res - image_max
-            d_max_res = image_max
-        # d_min_res = d_min_res - np.floor(free_space / 2).astype(np.int32) - optional_context
-        d_min_res = d_min_res - int(np.floor(free_space / 2)) - optional_context
-        if d_min_res < 0:
-            optional_context += -d_min_res
-            d_min_res = 0
-            d_max_res = min(image_max, d_max_res + optional_context)
-    return d_min_res, d_max_res
 
 class CVPRPredictor(nnUNetPredictor):
     def __init__(self,
                  tile_step_size: float = 0.5,
-                 use_gaussian: bool = False,
-                 use_mirroring: bool = False,
+                 use_gaussian: bool = True,
+                 use_mirroring: bool = True,
                  perform_everything_on_device: bool = True,
                  device: torch.device = torch.device('cuda'),
                  verbose: bool = False,
                  verbose_preprocessing: bool = False,
-                 allow_tqdm: bool = True,
-                 is_openvino: bool = False):
+                 allow_tqdm: bool = True):
         super().__init__(perform_everything_on_device=perform_everything_on_device, device=device, verbose=verbose,
-                         verbose_preprocessing=verbose_preprocessing, allow_tqdm=allow_tqdm, use_gaussian = use_gaussian,
-                         use_mirroring = use_mirroring, is_openvino = is_openvino)
+                         verbose_preprocessing=verbose_preprocessing, allow_tqdm=allow_tqdm)
 
-    def predict_case_with_bbox(self, npz_file, output_dir):
+    def predict_case_with_bbox(self, npz_file: np.ndarray, output_dir: Path):
         npz_file = Path(npz_file)
         npz_name = npz_file.name
-        #try:
-        #    np.load(output_dir/npz_name)
-        #    return
-        #except:
-        #    (output_dir/npz_name).unlink(missing_ok=True)
+        try:
+            np.load(output_dir/npz_name)
+            return
+        except:
+            (output_dir/npz_name).unlink(missing_ok=True)
         with np.load(npz_file) as f:
-            imgs = f['imgs'].astype(np.float32)
+            # imgs = f['imgs'].astype(np.float16)  # for CPU this might be flaot32
+            imgs = f['imgs'].astype(np.float32)  # for CPU this might be flaot32
             bboxs = f["boxes"]
         segs = np.zeros_like(imgs, dtype=np.uint16)
         if npz_name.startswith("3D"):
@@ -104,7 +78,11 @@ class CVPRPredictor(nnUNetPredictor):
             net_input = torch.cat([data, bbox_mask], dim=0)
             if crop_to_bbox_mask:
                 net_input, to_pad_input = self.crop_to_bbox_mask(net_input, bbox, context_fraction)
+
+            # Cast to precision
+            # with torch.amp.autocast(device_type=self.device.type, dtype=torch.float16):
             predicted_logits = self.predict_logits_from_preprocessed_data(net_input).cpu()
+
             if crop_to_bbox_mask:
                 predicted_logits = torch.nn.functional.pad(predicted_logits, to_pad_input, mode='constant')
             prediction = np.argmax(predicted_logits.numpy(), 0)[0]
@@ -117,33 +95,33 @@ class CVPRPredictor(nnUNetPredictor):
         '''
         Return the cropped image and the padding to recover the original shape.
         '''
-        global _get_min_max_crop
         patch_size = self.configuration_manager.patch_size
         x_min, y_min, x_max, y_max = bbox
         x_image_max = net_input.shape[3]
         y_image_max = net_input.shape[2]
-        # def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
-        #     """
-        #     Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
-        #     """
-        #     d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
-        #     d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
-        #
-        #     # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
-        #     if d_max_res - d_min_res < d_patch_size:
-        #         current_size = d_max_res - d_min_res
-        #         free_space = d_patch_size - current_size
-        #         d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
-        #         optional_context = 0
-        #         if d_max_res > image_max:
-        #             optional_context += d_max_res - image_max
-        #             d_max_res = image_max
-        #         d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
-        #         if d_min_res < 0:
-        #             optional_context += -d_min_res
-        #             d_min_res = 0
-        #             d_max_res = min(image_max, d_max_res + optional_context)
-        #     return d_min_res, d_max_res
+        def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
+            """
+            Return the min and max values to crop the image, i.e. the part of the image we consider for prediction.
+            """
+            d_min_res = max(0, d_min - int(context_fraction * d_patch_size))
+            d_max_res = min(image_max, d_max + int(context_fraction * d_patch_size))
+
+            # d_max_res - d_min_res can be smaller than patch size -> enlarge crop to patch size
+            if d_max_res - d_min_res < d_patch_size:
+                current_size = d_max_res - d_min_res
+                free_space = d_patch_size - current_size
+                d_max_res = d_max_res + np.ceil(free_space / 2).astype(int)
+                optional_context = 0
+                if d_max_res > image_max:
+                    optional_context += d_max_res - image_max
+                    d_max_res = image_max
+                d_min_res = d_min_res - np.floor(free_space / 2).astype(int) - optional_context
+                if d_min_res < 0:
+                    optional_context += -d_min_res
+                    d_min_res = 0
+                    d_max_res = min(image_max, d_max_res + optional_context)
+
+            return d_min_res, d_max_res
 
         # TODO: check which patch size goes in which image dim...
         x_min_res, x_max_res = _get_min_max_crop(patch_size[1], context_fraction, x_min, x_max, x_image_max)
@@ -152,6 +130,32 @@ class CVPRPredictor(nnUNetPredictor):
         # TODO: understand why padding can be negative here... -> seemingly I used the wrong {x,y}_image_max wrt {x,y}_{min,max}_res
         return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [x_min_res, x_image_max - x_max_res, y_min_res, y_image_max - y_max_res, 0, 0, 0, 0]
         # return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
+
+
+def main(args):
+    output_dir = Path(args.output_dir)
+    input_dir = Path(args.input_dir)
+    if args.device == 'cuda':
+        device = torch.device('cuda')
+    elif args.device == 'cpu':
+        device = torch.device('cpu')
+    else:
+        raise ValueError(f"Device {args.device} not supported")
+
+    args.fold = int(args.fold) if args.fold != 'all' else 'all'
+    predictor = CVPRPredictor(allow_tqdm=False, device=device)
+    predictor.initialize_from_trained_model_folder(args.model_path, (args.fold,), args.checkpointname)
+    if hasattr(predictor.network, 'return_unet_head'):
+        predictor.network.return_unet_head = False
+    random.seed(42)
+    files_to_predict = sorted(list(input_dir.glob("*.npz")))
+    if args.modality is not None:
+        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
+    random.shuffle(files_to_predict)
+    if args.num_gpus > 1:
+        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
+    for npz_file in tqdm(files_to_predict):
+        predictor.predict_case_with_bbox(npz_file, output_dir)
 
 
 if __name__ == '__main__':
@@ -209,22 +213,25 @@ if __name__ == '__main__':
         required=False,
         help='If set only the modality provided will be predicted'
     )
+    parser.add_argument(
+        '--fold',
+        type=str,
+        default='0',
+        required=False,
+        help='If set only the modality provided will be predicted'
+    )
+    parser.add_argument(
+        '--device',
+        type=str,
+        default='cuda',
+        required=False,
+        help='Specify device to use'
+    )
     args = parser.parse_args()
-    input_dir = Path(args.input_dir)
+    args.input_dir = Path(args.input_dir)
     if args.output_dir is None:
-        output_dir = input_dir.parent / "predictions"
+        args.output_dir = args.input_dir.parent / "predictions"
     else:
-        output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
-
-    predictor = CVPRPredictor(allow_tqdm=False, device = torch.device('cpu'), is_openvino = True)
-    predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
-    random.seed(42)
-    files_to_predict = sorted(list(input_dir.glob("*.npz")))
-    if args.modality is not None:
-        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
-    random.shuffle(files_to_predict)
-    if args.num_gpus > 1:
-        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
-    for npz_file in tqdm(files_to_predict):
-        predictor.predict_case_with_bbox(npz_file, output_dir)
+        args.output_dir = Path(args.output_dir)
+    args.output_dir.mkdir(exist_ok=True, parents=True)
+    main(args)

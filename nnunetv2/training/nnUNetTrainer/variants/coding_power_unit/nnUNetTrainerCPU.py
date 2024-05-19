@@ -17,7 +17,8 @@ from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
 from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
 from nnunetv2.utilities.collate_outputs import collate_outputs
-from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
+#from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
+from nnunetv2.custom_cvpr_stuff.get_network_from_plans import get_network_from_plans
 from nnunetv2.utilities.helpers import dummy_context
 from torch import autocast, nn
 from torch import distributed as dist
@@ -211,6 +212,13 @@ class nnUNetTrainerCPU(nnUNetTrainer):
             fn_hard = fn_hard[1:]
 
         return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
+
+
+class nnUNetTrainerCPU_ft_SAM(nnUNetTrainerCPU):
+    def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
+                 device: torch.device = torch.device('cuda')):
+        super().__init__(plans, configuration, fold, dataset_json, unpack_dataset, device)
+        self.initial_lr = 1e-3
 
 
 class nnUNetTrainerCPU_Oversample(nnUNetTrainerCPU):
