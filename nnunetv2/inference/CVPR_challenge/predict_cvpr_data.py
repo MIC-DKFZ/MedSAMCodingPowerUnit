@@ -282,6 +282,32 @@ class CVPRPredictor(nnUNetPredictor):
         # return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
 
 
+def main(args):
+    output_dir = Path(args.output_dir)
+    input_dir = Path(args.input_dir)
+    if args.device == 'cuda':
+        device = torch.device('cuda')
+    elif args.device == 'cpu':
+        device = torch.device('cpu')
+    else:
+        raise ValueError(f"Device {args.device} not supported")
+
+    args.fold = int(args.fold) if args.fold != 'all' else 'all'
+    predictor = CVPRPredictor(allow_tqdm=False, device=device)
+    predictor.initialize_from_trained_model_folder(args.model_path, (args.fold,), args.checkpointname)
+    if hasattr(predictor.network, 'return_unet_head'):
+        predictor.network.return_unet_head = False
+    random.seed(42)
+    files_to_predict = sorted(list(input_dir.glob("*.npz")))
+    if args.modality is not None:
+        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
+    random.shuffle(files_to_predict)
+    if args.num_gpus > 1:
+        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
+    for npz_file in tqdm(files_to_predict):
+        predictor.predict_case_with_bbox(npz_file, output_dir)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
