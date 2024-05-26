@@ -9,6 +9,10 @@ from tqdm import tqdm
 #from numba import jit
 from nnunetv2.inference.data_iterators import PreprocessAdapterFromNpy
 from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+from torchvision import transforms
+import nncf
 
 #@jit(nopython=True)
 def _get_min_max_crop(d_patch_size, context_fraction, d_min, d_max, image_max) -> Tuple[int, int]:
@@ -154,6 +158,41 @@ class CVPRPredictor(nnUNetPredictor):
         # return net_input[:, :, y_min_res:y_max_res, x_min_res:x_max_res], [y_min_res, max(0, y_image_max - y_max_res), x_min_res, max(0, x_image_max - x_max_res), 0, 0, 0, 0]
 
 
+class CustomImageData(Dataset):
+    def __init__(self, input_dir, #output_dir, model_path, checkpoint_name, is_openvino: bool = True,
+                 transform=None, target_transform=None):
+        self.img_files = sorted(list(Path(input_dir).glob("*.npz")))
+        self.transform = transform
+        self.target_transform = target_transform
+        #self.predictor = CVPRPredictor(allow_tqdm=False, device=torch.device('cpu'), is_openvino=is_openvino)
+        #self.predictor.initialize_from_trained_model_folder(model_path, (0,), checkpoint_name)
+        #self.output_dir = Path(output_dir)
+    def __len__(self):
+        return len(self.img_files)
+
+    def __getitem__(self, index):
+        #torch.set_num_threads(20)
+        npz_file = self.img_files[index]
+        with np.load(npz_file) as f:
+            image = f['imgs'].astype(np.float32)
+            bboxs = f["boxes"]
+        bboxs = {idx: bbox for idx, bbox in enumerate(bboxs, 1)}
+        bbox_mask = np.ones((*image.shape[:2], 1), dtype=image.dtype)
+        net_out = np.concatenate([image, bbox_mask], axis=-1)
+        net_out = net_out.transpose((2, 0, 1))#[:, None]  # (3, 1, H, W)
+        #if self.transform:
+        #    image = self.transform(image)
+        #if self.target_transform:
+        #    bboxs = self.target_transform(label)
+        #segs = self.predictor.predict_2d_npy_array_with_bbox(image, {'spacing': (999, 1, 1)}, bboxs)
+        #np.savez_compressed(self.output_dir / npz_file.name, segs=segs)
+
+        return net_out, bboxs
+
+def transform_fn(data_item):
+    images, _ = data_item
+    return images
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -210,21 +249,60 @@ if __name__ == '__main__':
         help='If set only the modality provided will be predicted'
     )
     args = parser.parse_args()
-    input_dir = Path(args.input_dir)
-    if args.output_dir is None:
-        output_dir = input_dir.parent / "predictions"
-    else:
-        output_dir = Path(args.output_dir)
-    output_dir.mkdir(exist_ok=True, parents=True)
+    #input_dir = Path(args.input_dir)
+    #if args.output_dir is None:
+    #    output_dir = input_dir.parent / "predictions"
+    #else:
+    #    output_dir = Path(args.output_dir)
+    #output_dir.mkdir(exist_ok=True, parents=True)
 
-    predictor = CVPRPredictor(allow_tqdm=False, device = torch.device('cpu'), is_openvino = True)
+    predictor = CVPRPredictor(allow_tqdm=False, device = torch.device('cpu'), is_openvino = False)
     predictor.initialize_from_trained_model_folder(args.model_path, (0,), args.checkpointname)
-    random.seed(42)
-    files_to_predict = sorted(list(input_dir.glob("*.npz")))
-    if args.modality is not None:
-        files_to_predict = [f for f in files_to_predict if args.modality in f.name]
-    random.shuffle(files_to_predict)
-    if args.num_gpus > 1:
-        files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
-    for npz_file in tqdm(files_to_predict):
-        predictor.predict_case_with_bbox(npz_file, output_dir)
+    # random.seed(42)
+    # files_to_predict = sorted(list(input_dir.glob("*.npz")))
+    # if args.modality is not None:
+    #     files_to_predict = [f for f in files_to_predict if args.modality in f.name]
+    # random.shuffle(files_to_predict)
+    # if args.num_gpus > 1:
+    #     files_to_predict = files_to_predict[args.gpu_id::args.num_gpus]
+    # for npz_file in tqdm(files_to_predict):
+    #     predictor.predict_case_with_bbox(npz_file, output_dir)
+
+    test_data = CustomImageData(args.input_dir)#,args.output_dir, args.model_path, args.checkpointname)
+    test_dataloader = DataLoader(test_data, batch_size=1, shuffle=False, num_workers= 1)
+    #calibration_dataset = nncf.Dataset(test_dataloader, transform_fn)
+    pyt_model = predictor.network
+
+    import openvino as ov
+    import openvino.properties as props
+    import openvino.properties.hint as hints
+
+    config = {hints.performance_mode: hints.PerformanceMode.LATENCY}
+             #props.inference_num_threads: "30"}
+    core = ov.Core()
+
+    ov_model = ov.convert_model(pyt_model)  # , example_input=input_tensor)
+    ov_compiled_model = core.compile_model(ov_model, "CPU", config)
+    #core.set_property("CPU", properties=config) --wrong way
+
+    calibration_dataset = nncf.Dataset(test_dataloader, transform_fn)
+    torch_quantized_model = nncf.quantize(pyt_model, calibration_dataset, subset_size= 10)
+    input_tensor = torch.randn((1,4,512,512))
+    ov_model = ov.convert_model(torch_quantized_model , example_input=input_tensor)
+    ov_quant_model = core.compile_model(ov_model, "CPU")
+
+    start = time.time()
+    for data in tqdm(test_dataloader):
+        image, _ = data
+        #bbox_mask = torch.ones((1, 1, *image.shape[2:]), dtype=image.dtype)
+        #net_input = torch.cat([image, bbox_mask], dim=1)
+        res = ov_compiled_model(image)[0]
+    print('OpenVINO elapsed:', time.time()-start)
+
+    start = time.time()
+    for data in tqdm(test_dataloader):
+        image, _ = data
+        #bbox_mask = torch.ones((1, 1, *image.shape[2:]), dtype=image.dtype)
+        #net_input = torch.cat([image, bbox_mask], dim=1)
+        res = pyt_model(image)
+    print('Pure Pytorch elapsed', time.time()-start)
